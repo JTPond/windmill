@@ -1,37 +1,43 @@
 // #![deny(warnings)]
+#![crate_name = "windmill"]
 #![allow(non_snake_case)]
 
-use std::env;
+extern crate rusty_money;
+
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 use std::error;
 use std::fmt;
 
 use std::default::Default;
-use std::convert::Infallible;
 
 use std::cmp::Ordering;
 
+use chrono::prelude::*;
+
 use rand::distributions::{Distribution, Uniform};
 
-use Monies::{Money, define_currency_set};
+// use serde_derive::{Deserialize, Serialize};
 
-define_currency_set!(
-  internal {
-    INV: {
-      code: "INV",
-      exponent: 2,
-      locale: Locale::EnUs,
-      minor_units: 100,
-      name: "INV",
-      symbol: "𝒾",
-      symbol_first: true
-    }
-  }
-);
+use rusty_money::{Money, iso};
+
+// define_currency_set!(
+//   chain{
+//     INV{
+//       code: "INV",
+//       exponent: 2,
+//       locale: Locale::EnUs,
+//       minor_units: 100,
+//       name: "INV",
+//       symbol: "𝒾",
+//       symbol_first: true,
+//     }
+//   }
+// );
 
 /// Enum of built in Error types
-#[derive(Debug,PartialEq,Clone, Copy,Serialize, Deserialize)]
+#[derive(Debug,PartialEq,Clone, Copy)]
 pub enum WindmillError {
     Incomplete,
     BadRequest,
@@ -100,7 +106,7 @@ impl RanIDs {
             }
             i -= 1;
         }
-        WindmillError::Incomplete
+        Err(WindmillError::Incomplete)
     }
 }
 
@@ -110,26 +116,26 @@ impl Default for RanIDs {
     }
 }
 
-#[derive(Debug,PartialEq,Clone, Serialize, Deserialize)]
+#[derive(Debug,PartialEq,Clone)]
 struct Asset {
     name: String,
     address: String,
 }
 
-#[derive(Debug,Eq,Clone, Serialize, Deserialize)]
-struct Bid {
-    id: String,
-    quantity: u64,
-    price: Money,
-    timestamp: DateTime<Utc>,
+#[derive(Debug,Eq,Clone)]
+pub struct Bid {
+    pub id: String,
+    pub quantity: u64,
+    pub price: Money<'static, iso::Currency>,
+    pub timestamp: DateTime<Utc>,
 }
 
 impl Ord for Bid {
     fn cmp(&self, other: &Self) -> Ordering {
-        let ord = (self.price/self.quantity).cmp((&other.price/&other.quantity));
+        let ord = (self.price.clone()/self.quantity).cmp(&(other.price.clone()/other.quantity));
         match ord {
-            Ordering::Equal => return &other.timestamp.cmp(self.timestamp);
-            _ => return ord;
+            Ordering::Equal => return other.timestamp.cmp(&self.timestamp),
+            _ => return ord,
         }
     }
 }
@@ -142,86 +148,101 @@ impl PartialOrd for Bid {
 
 impl PartialEq for Bid {
     fn eq(&self, other: &Self) -> bool {
-        (self.price/self.quantity) == (&other.price/&other.quantity)) &&
-        &other.timestamp == self.timestamp
+        (self.price.clone()/self.quantity) == (other.price.clone()/other.quantity) &&
+        other.timestamp == self.timestamp
     }
 }
 
-#[derive(Debug,PartialEq,Clone, Serialize, Deserialize)]
-enum AuctionResult {
-    Success {quantity: u64, price: Money},
+#[derive(Debug,PartialEq,Clone)]
+pub enum AuctionResult {
+    Success {quantity: u64, price: Money<'static, iso::Currency>},
     InProgress,
     Failure,
 }
 
-#[derive(Debug,PartialEq,Clone, Serialize, Deserialize)]
-enum BidResult {
+#[derive(Debug,PartialEq,Clone)]
+pub enum BidResult {
     Completed(AuctionResult),
     Submitted,
 }
 
-#[derive(Debug,PartialEq,Clone,Serialize, Deserialize)]
-struct Auction {
+#[derive(Clone)]
+pub struct Auction {
+    time: DateTime<Utc>,
     shares: u64,
-    tot: u64,
-    bids: HashMap<string,Bid>,
-    results: HashMap<string,AuctionResult>,
+    bids: HashMap<String,Bid>,
+    pub results: HashMap<String,AuctionResult>,
     ids: RanIDs,
 }
 
 impl Auction {
-    fn new(shares: u64) -> Self {
+    pub fn new(time: DateTime<Utc>, shares: u64) -> Self {
         Auction {
+            time,
             shares,
-            tot: 0,
             bids: HashMap::default(),
             results: HashMap::default(),
             ids: RanIDs::default(),
         }
     }
 
-    fn join(&mut self) -> Result<String,WindmillError> {
+    pub fn join(&mut self) -> Result<String,WindmillError> {
         let nt = self.ids.get()?;
         self.results.insert(nt.clone(),AuctionResult::InProgress);
-        nt
+        Ok(nt)
     }
 
-    fn bid(&mut self,bid: Bid) -> Result<BidResult,WindmillError> {
-        let {id, quantity, price} = bid.clone();
+    pub fn bid(&mut self,bid: Bid) -> Result<BidResult,WindmillError> {
+        let Bid{id, quantity: _, price: _, timestamp} = bid.clone();
         if let Some(res) = self.results.get(&id.clone()){
-            return match *res {
+            let local_res = res.clone();
+            match local_res {
                 AuctionResult::InProgress => {
-                    tot += quantity;
-                    bids.insert(&id.clone(),bid);
-                    if tot < shares {
+                    if timestamp < self.time {
+                        self.bids.insert(id.clone(),bid);
                         return Ok(BidResult::Submitted);
                     } else {
-                    //TODO
+                        self.tabulate();
+                        return Ok(BidResult::Completed(local_res.clone()));
                     }
                 }
-                _ => return Ok(BidResult::Completed(*res));
+                _ => return Ok(BidResult::Completed(local_res.clone())),
+            }
         }
         else {
             return Err(WindmillError::BadRequest);
         }
     }
 
-    fn tabulate(&mut self) -> AuctionResult {
-        let mut final_results = self.bids.values().cloned().collect();
-        final_results.sort_unstable().reverse();
-        let mut counted = 0u64;
-        for bb in final_results.iter() {
-            if counted + bb.quantity <= self.shares {
-                if let Some(res) = self.results.get(&id.clone()){
-                    match *res {
-                        AuctionResult::InProgress => {
-                            *res = AuctionResult::Success{quantity: *bb.quantity, price: Money::from_minor(0,internal::INV)};
-                        }
-                        AuctionResult::Success{qq, _} => {
-                            *res = AuctionResult::Success{quantity: qq+*bb.quantity, price: Money::from_minor(0,internal::INV)};
-                        }
-                    }
+    pub fn tabulate(&mut self) {
+        let mut final_results: Vec<Bid> = self.bids.values().cloned().collect();
+        final_results.sort_unstable();
+        final_results.reverse();
+        let mut price = Money::from_minor(0,iso::USD);
+        let mut counter = 0usize;
+        let mut counted = 0i64;
+        let mut winners: HashMap<String,Bid> = HashMap::new();
+        while counted < self.shares.try_into().unwrap() && counter < final_results.len() {
+            let mut bb = final_results[counter].clone();
+            price = bb.price.clone()/bb.quantity;
+            counted += bb.quantity as i64;
+            if counted > self.shares.try_into().unwrap() {
+                bb.quantity = ((self.shares as i64) - counted + (bb.quantity as i64)) as u64;
+            }
+            winners.insert(bb.id.clone(),bb);
+            counter += 1;
+        }
+        if counted >= self.shares.try_into().unwrap() {
+            for (key, val) in self.results.iter_mut() {
+                if let Some(bb) = winners.get(&key.clone()){
+                    *val = AuctionResult::Success{quantity: bb.quantity, price: bb.quantity*price.clone()};
+                } else {
+                    *val = AuctionResult::Failure;
                 }
+            }
+        } else {
+            for (_, val) in self.results.iter_mut() {
+                *val = AuctionResult::Failure;
             }
         }
     }
