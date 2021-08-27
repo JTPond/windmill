@@ -20,21 +20,21 @@ use rand::distributions::{Distribution, Uniform};
 
 // use serde_derive::{Deserialize, Serialize};
 
-use rusty_money::{Money, iso};
+use rusty_money::{Money, define_currency_set};
 
-// define_currency_set!(
-//   chain{
-//     INV{
-//       code: "INV",
-//       exponent: 2,
-//       locale: Locale::EnUs,
-//       minor_units: 100,
-//       name: "INV",
-//       symbol: "𝒾",
-//       symbol_first: true,
-//     }
-//   }
-// );
+define_currency_set!(
+  chain {
+    INV:{
+      code: "INV",
+      exponent: 2,
+      locale: Locale::EnUs,
+      minor_units: 100,
+      name: "INV",
+      symbol: "𝒾",
+      symbol_first: false,
+    }
+  }
+);
 
 /// Enum of built in Error types
 #[derive(Debug,PartialEq,Clone, Copy)]
@@ -126,7 +126,7 @@ struct Asset {
 pub struct Bid {
     pub id: String,
     pub quantity: u64,
-    pub price: Money<'static, iso::Currency>,
+    pub price: Money<'static, chain::Currency>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -155,14 +155,14 @@ impl PartialEq for Bid {
 
 #[derive(Debug,PartialEq,Clone)]
 pub enum AuctionResult {
-    Success {quantity: u64, price: Money<'static, iso::Currency>},
+    Success {quantity: u64, price: Money<'static, chain::Currency>},
     InProgress,
     Failure,
 }
 
-#[derive(Debug,PartialEq,Clone)]
+#[derive(Debug,PartialEq,Clone,Copy)]
 pub enum BidResult {
-    Completed(AuctionResult),
+    PastTime,
     Submitted,
 }
 
@@ -203,10 +203,10 @@ impl Auction {
                         return Ok(BidResult::Submitted);
                     } else {
                         self.tabulate();
-                        return Ok(BidResult::Completed(local_res.clone()));
+                        return Ok(BidResult::PastTime);
                     }
                 }
-                _ => return Ok(BidResult::Completed(local_res.clone())),
+                _ => return Ok(BidResult::PastTime),
             }
         }
         else {
@@ -218,7 +218,7 @@ impl Auction {
         let mut final_results: Vec<Bid> = self.bids.values().cloned().collect();
         final_results.sort_unstable();
         final_results.reverse();
-        let mut price = Money::from_minor(0,iso::USD);
+        let mut price = Money::from_minor(0,chain::INV);
         let mut counter = 0usize;
         let mut counted = 0i64;
         let mut winners: HashMap<String,Bid> = HashMap::new();
