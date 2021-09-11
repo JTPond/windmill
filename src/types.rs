@@ -7,21 +7,9 @@ use std::cmp::Ordering;
 
 use chrono::prelude::*;
 
-use rusty_money::{Money, define_currency_set};
+use rust_decimal::prelude::*;
 
-define_currency_set!(
-  Chain {
-    INV:{
-      code: "INV",
-      exponent: 2,
-      locale: Locale::EnUs,
-      minor_units: 100,
-      name: "INV",
-      symbol: "𝒾",
-      symbol_first: false,
-    }
-  }
-);
+use serde_derive::{Deserialize, Serialize};
 
 /// Enum of built in Error types
 #[derive(Debug,PartialEq,Clone, Copy)]
@@ -57,17 +45,17 @@ impl error::Error for WindmillError {
     }
 }
 
-#[derive(Debug,Eq,Clone)]
+#[derive(Debug,Eq,Clone, Serialize, Deserialize)]
 pub struct Bid {
     pub id: String,
     pub quantity: u64,
-    pub price: Money<'static, Chain::Currency>,
+    pub price: Decimal,
     pub timestamp: DateTime<Utc>,
 }
 
 impl Ord for Bid {
     fn cmp(&self, other: &Self) -> Ordering {
-        let ord = (self.price.clone()/self.quantity).cmp(&(other.price.clone()/other.quantity));
+        let ord = (self.price.clone()/Decimal::from(self.quantity)).cmp(&(other.price.clone()/Decimal::from(other.quantity)));
         match ord {
             Ordering::Equal => return other.timestamp.cmp(&self.timestamp),
             _ => return ord,
@@ -83,19 +71,20 @@ impl PartialOrd for Bid {
 
 impl PartialEq for Bid {
     fn eq(&self, other: &Self) -> bool {
-        (self.price.clone()/self.quantity) == (other.price.clone()/other.quantity) &&
+        (self.price.clone()/Decimal::from(self.quantity)) == (other.price.clone()/Decimal::from(other.quantity)) &&
         other.timestamp == self.timestamp
     }
 }
 
-#[derive(Debug,PartialEq,Clone)]
+
+#[derive(Debug,PartialEq,Clone, Copy, Serialize, Deserialize)]
 pub enum AuctionResult {
-    Success {quantity: u64, price: Money<'static, Chain::Currency>},
+    Success {quantity: u64, price: Decimal},
     InProgress,
     Failure,
 }
 
-#[derive(Debug,PartialEq,Clone,Copy)]
+#[derive(Debug,PartialEq,Clone,Copy, Serialize, Deserialize)]
 pub enum BidResult {
     PastTime,
     Submitted,

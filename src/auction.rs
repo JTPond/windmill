@@ -1,5 +1,3 @@
-extern crate rusty_money;
-
 use std::collections::HashMap;
 use std::collections::hash_map::Iter;
 
@@ -9,9 +7,9 @@ use std::default::Default;
 
 use chrono::prelude::*;
 
-use rusty_money::Money;
+use rust_decimal::prelude::*;
 
-use crate::types::{Bid, BidResult, AuctionResult, Chain, WindmillError};
+use crate::types::{Bid, BidResult, AuctionResult, WindmillError};
 use crate::RanIDs;
 
 #[derive(Clone)]
@@ -79,13 +77,13 @@ impl Auction {
             let mut final_results: Vec<Bid> = self.bids.values().cloned().collect();
             final_results.sort_unstable();
             final_results.reverse();
-            let mut price = Money::from_minor(0,Chain::INV);
+            let mut price = Decimal::ZERO;
             let mut counter = 0usize;
             let mut counted = 0i64;
             let mut winners: HashMap<String,Bid> = HashMap::new();
             while counted < self.shares.try_into().unwrap() && counter < final_results.len() {
                 let mut bb = final_results[counter].clone();
-                price = bb.price.clone()/bb.quantity;
+                price = bb.price.clone()/Decimal::from(bb.quantity);
                 counted += bb.quantity as i64;
                 if counted > self.shares.try_into().unwrap() {
                     bb.quantity = ((self.shares as i64) - counted + (bb.quantity as i64)) as u64;
@@ -96,7 +94,7 @@ impl Auction {
             if counted >= self.shares.try_into().unwrap() {
                 for (key, val) in self.results.iter_mut() {
                     if let Some(bb) = winners.get(&key.clone()){
-                        *val = AuctionResult::Success{quantity: bb.quantity, price: bb.quantity*price.clone()};
+                        *val = AuctionResult::Success{quantity: bb.quantity, price: price.clone()*Decimal::from(bb.quantity)};
                     } else {
                         *val = AuctionResult::Failure;
                     }
